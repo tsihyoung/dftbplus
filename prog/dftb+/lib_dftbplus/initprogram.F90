@@ -2883,11 +2883,12 @@ contains
       write(stdOut, "(A,':',T30,A)") "Electronic solver", this%electronicSolver%getSolverName()
     end if
 
-    if (this%electronicSolver%iSolver == electronicSolverTypes%magma_gvd) then
+    if (this%electronicSolver%iSolver == electronicSolverTypes%magma_gvd &
+      & .or. input%ctrl%elecDynInp%Multiplier == multiplierTypes%GPU) then
       #:if WITH_GPU
         call env%initGpu()
       #:else
-        call error("Magma-solver selected, but program was compiled without MAGMA")
+        call error("Magma-solver or multiplier selected, but program was compiled without MAGMA")
       #:endif
     endif
 

@@ -5172,6 +5172,7 @@ contains
     call convertByMul(char(modifier), timeUnits, child, input%dt)
 
     call getChildValue(node, "Populations", input%tPopulations, .false.)
+    call getChildValue(node, "Energies", input%tEnergies, .false.)
     call getChildValue(node, "WriteFrequency", input%writeFreq, 50)
     call getChildValue(node, "Restart", input%tReadRestart, .false.)
     if (input%tReadRestart) then
@@ -5187,6 +5188,17 @@ contains
     call getChildValue(node, "WriteBondPopulation", input%tBondP, .false.)
     call getChildValue(node, "Pump", input%tPump, .false.)
     call getChildValue(node, "FillingsFromFile", input%tFillingsFromFile, .false.)
+
+    call getChildValue(node, "Multiplier", value1, "cpu")
+    call getNodeName(value1, buffer)
+    select case(char(buffer))
+    case ("cpu")
+      input%Multiplier = multiplierTypes%CPU
+    case ("gpu")
+      input%Multiplier = multiplierTypes%GPU
+    case default
+      call detailedError(child, "Unknown multiplier type " // char(buffer))
+    end select
 
     if (input%tPump) then
       call getChildValue(node, "PumpProbeFrames", input%tdPPFrames)

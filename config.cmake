@@ -16,7 +16,7 @@ option(WITH_MPI "Whether DFTB+ should support MPI-parallelism" FALSE)
 option(WITH_ELSI "Whether DFTB+ with MPI-parallelism should use the ELSI libraries" FALSE)
 # Works only with MPI-parallel build.
 
-option(WITH_GPU "Whether DFTB+ should support GPU-acceleration via the MAGMA-library" FALSE)
+option(WITH_GPU "Whether DFTB+ should support GPU-acceleration via the MAGMA-library" TRUE)
 
 option(WITH_TRANSPORT "Whether transport via libNEGF should be included." FALSE)
 # Works only when building static libraries (see option BUILD_SHARED_LIBS)
@@ -28,7 +28,7 @@ option(WITH_POISSON "Whether the Poisson-solver should be included" ${WITH_TRANS
 
 option(WITH_SOCKETS "Whether socket communication should be allowed for" FALSE)
 
-option(WITH_ARPACK "Whether the ARPACK library should be included (needed for TD-DFTB)" FALSE)
+option(WITH_ARPACK "Whether the ARPACK library should be included (needed for TD-DFTB)" TRUE)
 # Works only with non-MPI (serial) build, needed for Casida linear response
 
 option(WITH_DFTD3 "Whether the DFTD3 library should be included" FALSE)

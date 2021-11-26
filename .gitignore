@@ -13,3 +13,5 @@ __pycache__
 .idea
 tools/dptools/build
 .nfs*
+prog/dftb+/.vscode
+prog/dftb+/*/*mod

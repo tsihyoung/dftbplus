@@ -68,7 +68,7 @@ module dftbp_timeprop
   public :: runDynamics, TElecDynamics_init
   public :: initializeDynamics, doTdStep
   public :: TElecDynamicsInp, TElecDynamics
-  public :: pertTypes, envTypes, tdSpinTypes
+  public :: pertTypes, envTypes, tdSpinTypes, multiplierTypes
 
   !> Data type to  initialize electronic dynamics variables from parser
   type TElecDynamicsInp
@@ -120,8 +120,14 @@ module dftbp_timeprop
     !> Frequency of variable dumping to restart file
     integer :: restartFreq
 
+    !> Multiplier (CPU or GPU)
+    integer :: Multiplier
+
     !> If time-dependent populations should be calculated
     logical :: tPopulations
+
+    !> If time-dependent energy should be calculated
+    logical :: tEnergies
 
     !> If calculation should be restarted from dump file
     logical :: tReadRestart
@@ -200,14 +206,15 @@ module dftbp_timeprop
     real(dp) :: field, omega, time0, time1, phase
     real(dp), allocatable :: tdFunction(:, :)
     complex(dp) :: fieldDir(3)
-    integer :: writeFreq, pertType, envType, spType
+    integer :: writeFreq, pertType, envType, spType, Multiplier
     integer :: nAtom, nOrbs, nSpin=1, currPolDir=1, restartFreq
     logical :: tdWriteExtras
     integer, allocatable :: species(:), polDirs(:), speciesAll(:)
     character(mc), allocatable :: speciesName(:)
-    logical :: tPopulations, tSpinPol=.false.
+    logical :: tPopulations, tEnergies, tSpinPol=.false.
     logical :: tReadRestart, tWriteRestart, tRestartAscii, tWriteRestartAscii, tWriteAutotest
     logical :: tLaser = .false., tKick = .false., tKickAndLaser = .false., tEnvFromFile = .false.
+    logical :: tCPU = .true.
     type(TScc), allocatable :: sccCalc
     character(mc) :: autotestTag
 
@@ -288,6 +295,18 @@ module dftbp_timeprop
 
   !> Container for enumerated available types of perturbation
   type(TDPertTypeEnum), parameter :: pertTypes = TDPertTypeEnum()
+
+  type :: TDMultiplierEnum
+
+    !> CPU GEMM
+    integer :: CPU = 1
+
+    !> GPU GEMM
+    integer :: GPU = 2
+
+  end type TDMultiplierEnum
+
+  type(TDMultiplierEnum), parameter :: multiplierTypes = TDMultiplierEnum()
 
   type :: TDEnvelopeFunctionEnum
 
@@ -415,9 +434,11 @@ contains
     this%dt = inp%dt
     this%nSteps = inp%steps
     this%pertType = inp%pertType
+    this%Multiplier = inp%Multiplier
     this%envType = inp%envType
     this%spType = inp%spType
     this%tPopulations = inp%tPopulations
+    this%tPopulations = inp%tEnergies
     this%tReadRestart = inp%tReadRestart
     this%tWriteRestart = inp%tWriteRestart
     this%tRestartAscii = inp%tReadRestartAscii
@@ -459,6 +480,15 @@ contains
       this%tLaser = .false.
     case default
       call error("Wrong type of perturbation.")
+    end select
+
+    select case(inp%Multiplier)
+    case(multiplierTypes%CPU)
+      this%tCPU = .true.
+    case(multiplierTypes%GPU)
+      this%tCPU = .false.
+    case default
+      call error("Wrong type of multiplier.")
     end select
 
     if (allocated(solvation)) then
@@ -1227,11 +1257,19 @@ contains
     end do
 
     do iKS = 1, this%parallelKS%nLocalKS
-      call gemm(T2, T1(:,:,iKS), rho(:,:,iKS))
-      call gemm(T4, T2, Ssqr(:,:,iKS), cmplx(1, 0, dp))
-      call gemm(T2, T4, T3(:,:,iKS))
-      call gemm(rho(:,:,iKS), T2, Sinv(:,:,iKS), cmplx(0.5, 0, dp))
-      call gemm(rho(:,:,iKS), Sinv(:,:,iKS), T2, cmplx(0.5, 0, dp), cmplx(1, 0, dp), 'N', 'C')
+      if (this%tCPU) then
+        call gemm(T2, T1(:,:,iKS), rho(:,:,iKS))
+        call gemm(T4, T2, Ssqr(:,:,iKS), cmplx(1, 0, dp))
+        call gemm(T2, T4, T3(:,:,iKS))
+        call gemm(rho(:,:,iKS), T2, Sinv(:,:,iKS), cmplx(0.5, 0, dp))
+        call gemm(rho(:,:,iKS), Sinv(:,:,iKS), T2, cmplx(0.5, 0, dp), cmplx(1, 0, dp), 'N', 'C')
+      else
+        call magmaf_gemm(T2, T1(:,:,iKS), rho(:,:,iKS))
+        call magmaf_gemm(T4, T2, Ssqr(:,:,iKS), cmplx(1, 0, dp))
+        call magmaf_gemm(T2, T4, T3(:,:,iKS))
+        call magmaf_gemm(rho(:,:,iKS), T2, Sinv(:,:,iKS), cmplx(0.5, 0, dp))
+        call magmaf_gemm(rho(:,:,iKS), Sinv(:,:,iKS), T2, cmplx(0.5, 0, dp), cmplx(1, 0, dp), 'N', 'C')
+      endif
     end do
 
     write(stdout,"(A)")'Density kicked along ' // localDir(this%currPolDir) //'!'
@@ -1898,9 +1936,15 @@ contains
     allocate(T1(this%nOrbs,this%nOrbs))
 
     T1(:,:) = 0.0_dp
-    call gemm(T1, Sinv, H1)
-    call gemm(rhoOld, T1, rho, cmplx(-step, 0, dp), cmplx(1, 0, dp))
-    call gemm(rhoOld, rho, T1, cmplx(-step, 0, dp), cmplx(1, 0, dp), 'N', 'C')
+    if (this%tCPU) then
+      call gemm(T1, Sinv, H1)
+      call gemm(rhoOld, T1, rho, cmplx(-step, 0, dp), cmplx(1, 0, dp))
+      call gemm(rhoOld, rho, T1, cmplx(-step, 0, dp), cmplx(1, 0, dp), 'N', 'C')
+    else
+      call magmaf_gemm(T1, Sinv, H1)
+      call magmaf_gemm(rhoOld, T1, rho, cmplx(-step, 0, dp), cmplx(1, 0, dp))
+      call magmaf_gemm(rhoOld, rho, T1, cmplx(-step, 0, dp), cmplx(1, 0, dp), 'N', 'C')
+    endif
 
   end subroutine propagateRho
 
@@ -1936,30 +1980,41 @@ contains
     allocate(T4R(this%nOrbs,this%nOrbs))
     allocate(T5R(this%nOrbs,this%nOrbs))
 
-
     ! The code below takes into account that Sinv and H1 are real, this is twice as fast as the
     ! original above (propageteRho)
 
     ! get the real part of Sinv and H1
     T1R(:,:) = real(H1)
     T2R(:,:) = real(Sinv)
-    call gemm(T3R,T2R,T1R)
+    if (this%tCPU) then
+      call gemm(T3R,T2R,T1R)
+    else
+      call magmaf_gemm(T3R,T2R,T1R)
+    endif
 
     ! calculate the first term products for the real and imaginary parts independently
     T1R(:,:) = real(rho)
     T2R(:,:) = aimag(rho)
-    call gemm(T4R,T3R,T1R)
-    call gemm(T5R,T3R,T2R)
+    if (this%tCPU) then
+      call gemm(T4R,T3R,T1R)
+      call gemm(T5R,T3R,T2R)
+    else
+      call magmaf_gemm(T4R,T3R,T1R)
+      call magmaf_gemm(T5R,T3R,T2R)
+    endif
 
     ! build the commutator combining the real and imaginary parts of the previous result
     !$omp parallel do private(i,j)
-    do i=1,this%nOrbs
-      do j=1,this%nOrbs
+    do j=1,this%nOrbs
+      do i=1,this%nOrbs
         rhoOld(i,j) = rhoOld(i,j) + cmplx(0, -step, dp) * (T4R(i,j) + imag * T5R(i,j)) &
             + cmplx(0, step, dp) * conjg(T4R(j,i) + imag * T5R(j,i))
       enddo
     enddo
     !$omp end parallel do
+
+    ! transpose is slow
+    !rhoOld = rhoOld + cmplx(0,-step,dp) * (T4R + imag * T5R) + cmplx(0,step,dp) * transpose((T4R - imag * T5R))
 
   end subroutine propagateRhoRealH
 
@@ -2691,7 +2746,11 @@ contains
 
     integer :: ii
 
-    call gemm(T1, rho(:,:,iKS), EiginvAdj(:,:,iKS))
+    if (this%tCPU) then
+      call gemm(T1, rho(:,:,iKS), EiginvAdj(:,:,iKS))
+    else
+      call magmaf_gemm(T1, rho(:,:,iKS), EiginvAdj(:,:,iKS))
+    endif
     T1 = transpose(Eiginv(:,:,iKS)) * T1
 
     occ = real(sum(T1,dim=1), dp)
@@ -3073,7 +3132,11 @@ contains
         iSpin = this%parallelKS%localKS(2, iKS)
         call packHS(rhoPrim(:,iSpin), real(rho(:,:,iKS), dp), neighbourList%iNeighbour,&
             & nNeighbourSK, orb%mOrb, iSquare, iSparseStart, img2CentCell)
-        call gemm(T1R, real(rho(:,:,iKS), dp), real(H1(:,:,iKS), dp))
+        if (this%tCPU) then
+          call gemm(T1R, real(rho(:,:,iKS), dp), real(H1(:,:,iKS), dp))
+        else
+          call magmaf_gemm(T1R, real(rho(:,:,iKS), dp), real(H1(:,:,iKS), dp))
+        endif
         call her2k(T2R, real(Sinv(:,:,iKS), dp), T1R, 0.5_dp)
         call packHS(ErhoPrim, T2R, neighbourList%iNeighbour, nNeighbourSK, orb%mOrb, iSquare,&
             & iSparseStart, img2CentCell)
@@ -3087,7 +3150,11 @@ contains
         call packHS(rhoPrim(:,iSpin), rho(:,:,iKS), this%kPoint(:,iK), this%kWeight(iK),&
             & neighbourList%iNeighbour, nNeighbourSK, orb%mOrb, this%iCellVec, this%cellVec,&
             & iSquare, iSparseStart, img2CentCell)
-        call gemm(T1C, rho(:,:,iKS), H1(:,:,iKS))
+        if (this%tCPU) then
+          call gemm(T1C, rho(:,:,iKS), H1(:,:,iKS))
+        else
+          call magmaf_gemm(T1C, rho(:,:,iKS), H1(:,:,iKS))
+        endif
         call her2k(T2C, Sinv(:,:,iKS), T1C, (0.5_dp,0.0_dp))
         call packHS(ErhoPrim, T2C, this%kPoint(:,iK), this%kWeight(iK), neighbourList%iNeighbour,&
             & nNeighbourSK, orb%mOrb, this%iCellVec, this%cellVec, iSquare, iSparseStart,&
@@ -3680,10 +3747,12 @@ contains
     call getPositionDependentEnergy(this, this%energy, coordAll, img2CentCell, nNeighbourSK,&
         & neighbourList, repulsive, iAtInCentralRegion)
 
-    call getTDEnergy(this, this%energy, this%rhoPrim, this%trho, neighbourList, nNeighbourSK, orb,&
-        & iSquare, iSparseStart, img2CentCell, this%ham0, this%qq, q0, this%potential,&
-        & this%chargePerShell, this%energyKin, tDualSpinOrbit, thirdOrd, solvation, rangeSep,&
-        & qDepExtPot, this%qBlock, dftbu, xi, iAtInCentralRegion, tFixEf, Ef, onSiteElements)
+    if (this%tEnergies) then
+      call getTDEnergy(this, this%energy, this%rhoPrim, this%trho, neighbourList, nNeighbourSK, orb,&
+          & iSquare, iSparseStart, img2CentCell, this%ham0, this%qq, q0, this%potential,&
+          & this%chargePerShell, this%energyKin, tDualSpinOrbit, thirdOrd, solvation, rangeSep,&
+          & qDepExtPot, this%qBlock, dftbu, xi, iAtInCentralRegion, tFixEf, Ef, onSiteElements)
+    endif
 
     if (.not. this%tReadRestart .or. this%tProbe) then
       ! output ground state data
@@ -3886,10 +3955,12 @@ contains
           & neighbourList, repulsive, iAtInCentralRegion)
     end if
 
-    call getTDEnergy(this, this%energy, this%rhoPrim, this%rho, neighbourList, nNeighbourSK, orb,&
-        & iSquare, iSparseStart, img2CentCell, this%ham0, this%qq, q0, this%potential,&
-        & this%chargePerShell, this%energyKin, tDualSpinOrbit, thirdOrd, solvation, rangeSep,&
-        & qDepExtPot, this%qBlock, dftbU, xi, iAtInCentralRegion, tFixEf, Ef, onSiteElements)
+    if (this%tEnergies) then
+      call getTDEnergy(this, this%energy, this%rhoPrim, this%rho, neighbourList, nNeighbourSK, orb,&
+          & iSquare, iSparseStart, img2CentCell, this%ham0, this%qq, q0, this%potential,&
+          & this%chargePerShell, this%energyKin, tDualSpinOrbit, thirdOrd, solvation, rangeSep,&
+          & qDepExtPot, this%qBlock, dftbU, xi, iAtInCentralRegion, tFixEf, Ef, onSiteElements)
+    endif
 
     if ((mod(iStep, this%writeFreq) == 0)) then
       call getBondPopulAndEnergy(this, this%bondWork, this%lastBondPopul, this%rhoPrim, this%ham0,&

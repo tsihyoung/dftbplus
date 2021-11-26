@@ -9,6 +9,13 @@
 
 #! suffix and kinds for real types
 #:set REAL_KIND_PARAMS = [('real', 's'), ('dble', 'd')]
+#:set CMPLX_KIND_PARAMS = [('cmplx', 's', 'c'), ('dblecmplx', 'd', 'z')]
+#:set FACETYPE = ['real', 'cmplx', 'dble', 'dblecmplx']
+#:if WITH_GPU
+#:set ARCHLIST = ['','magmaf_']
+#:else
+#:set ARCHLIST = ['']
+#:endif
 
 !> Contains F90 wrapper functions for some commonly used blas calls needed in the code. The
 !> interface of all BLAS calls must be defined in the module blas.
@@ -16,26 +23,27 @@ module dftbp_blasroutines
   use dftbp_assert
   use dftbp_accuracy
   use dftbp_blas
+  #:if WITH_GPU
+  use dftbp_magma
+  #:endif
   implicit none
 
 
   !> Rank 1 update of a matrix A := alpha*x*x' + A
   !> Wrapper for the level 2 blas routine xsyr to perform the rank 1 update of the chosen triangle
   interface her
-    module procedure her_real
-    module procedure her_cmplx
-    module procedure her_dble
-    module procedure her_dblecmplx
+  #:for IFACETYPE in FACETYPE
+    module procedure her_${IFACETYPE}$
+  #:endfor
   end interface her
 
 
   !> Rank 1 update of a matrix A := alpha*x*y' + A
   !> Wrapper for the level 2 blas routine xger to perform the rank 1 update of a general matrix
   interface ger
-    module procedure ger_real
-    module procedure ger_cmplx
-    module procedure ger_dble
-    module procedure ger_dblecmplx
+  #:for IFACETYPE in FACETYPE
+    module procedure ger_${IFACETYPE}$
+  #:endfor
   end interface ger
 
 
@@ -52,12 +60,9 @@ module dftbp_blasroutines
   !> General matrix vector multiply y := alpha*a*x + beta*y
   !> Wrapper for the level 2 blas routine
   interface gemv
-    module procedure gemv_real
-    module procedure gemv_dble
     #:for suffix, _ in REAL_KIND_PARAMS
+      module procedure gemv_${suffix}$
       module procedure gemv231_${suffix}$
-    #:endfor
-    #:for suffix, _ in REAL_KIND_PARAMS
       module procedure gemv242_${suffix}$
     #:endfor
   end interface gemv
@@ -83,21 +88,21 @@ module dftbp_blasroutines
   !> of op( X ) = X or op( X ) = X'
 
   !> Wrapper for the level 3 blas routine
-  interface gemm
-    module procedure gemm_real
-    module procedure gemm_dble
-    module procedure gemm_cmplx
-    module procedure gemm_dblecmplx
-    #:for SUFFIX, _ in REAL_KIND_PARAMS
-      module procedure gemm332_${SUFFIX}$
-    #:endfor
-  end interface gemm
-
+  #:for arch in ARCHLIST
+  interface ${arch}$gemm
+  #:for IFACETYPE in FACETYPE
+    module procedure ${arch}$gemm_${IFACETYPE}$
+  #:endfor
+  #:for SUFFIX, _ in REAL_KIND_PARAMS
+    module procedure ${arch}$gemm332_${SUFFIX}$
+  #:endfor
+  end interface ${arch}$gemm
+  #:endfor
 
   !> Wrapper for the level 3 blas routine syrk/herk to perform the rank k update of the chosen
   !> triangle of matrix C
   interface herk
-  #:for IFACETYPE in ['real', 'cmplx', 'dble', 'dblecmplx']
+  #:for IFACETYPE in FACETYPE
     module procedure herk_${IFACETYPE}$
   #:endfor
   end interface herk
@@ -106,7 +111,7 @@ module dftbp_blasroutines
   !> Wrapper for the level 3 blas routine syr2k/her2k to perform the rank 2k update of the chosen
   !> triangle of matrix C
   interface her2k
-  #:for IFACETYPE in ['real', 'cmplx', 'dble', 'dblecmplx']
+  #:for IFACETYPE in FACETYPE
     module procedure her2k_${IFACETYPE}$
   #:endfor
   end interface her2k
@@ -1021,11 +1026,11 @@ contains
 
   end subroutine symm_dble
 
-
+#:for arch in ARCHLIST
 #:for suffix, kind in REAL_KIND_PARAMS
 
   !> ${suffix}$ matrix*matrix product
-  subroutine gemm_${suffix}$(C, A, B, alpha, beta, transA, transB, n, m, k, lda, ldb, ldc)
+  subroutine ${arch}$gemm_${suffix}$(C, A, B, alpha, beta, transA, transB, n, m, k, lda, ldb, ldc)
 
     !> general matrix output
     real(r${kind}$p), intent(inout) :: C(:,:)
@@ -1066,6 +1071,12 @@ contains
     integer :: in, im, ik
     character :: iTransA, iTransB
     real(r${kind}$p) :: iAlpha, iBeta
+#:if arch == 'magmaf_'
+    !magma_devptr_t :: dA, dB, dC, queue
+    integer(kind=8) :: dA, dB, dC, queue
+    integer :: istat
+    call magmaf_queue_create(0,queue)
+#:endif
 
     if (present(transA)) then
       iTransA = transA
@@ -1140,30 +1151,51 @@ contains
     @:ASSERT(((ildb>=ik).and.(iTransB == 'n' .or. iTransB == 'N'))&
         & .or. (size(b,dim=2)>=ik))
 
-    call ${kind}$gemm(iTransA,iTransB,im,in,ik,iAlpha,A,ilda,B,ildb,iBeta,C,ildc)
+#:if arch == 'magmaf_'
+    istat = magmaf_${kind}$malloc(dA,size(A))
+    istat = magmaf_${kind}$malloc(dB,size(B))
+    istat = magmaf_${kind}$malloc(dC,size(C))
 
-  end subroutine gemm_${suffix}$
+    call magmaf_${kind}$setmatrix(size(A,dim=1),size(A,dim=2),A,size(A,dim=1),dA,size(A,dim=1),queue)
+    call magmaf_${kind}$setmatrix(size(B,dim=1),size(B,dim=2),B,size(B,dim=1),dB,size(B,dim=1),queue)
+    call magmaf_${kind}$setmatrix(size(C,dim=1),size(C,dim=2),C,size(C,dim=1),dC,size(C,dim=1),queue)
+
+    call ${arch}$${kind}$gemm(iTransA,iTransB,im,in,ik,iAlpha,dA,ilda,dB,ildb,iBeta,dC,ildc,queue)
+
+    call magmaf_${kind}$getmatrix(size(C,dim=1),size(C,dim=2),dC,size(C,dim=1),C,size(C,dim=1),queue)
+    istat = magmaf_free(dA)
+    istat = magmaf_free(dB)
+    istat = magmaf_free(dC)
+    call magmaf_queue_destroy(queue)
+#:else
+    call ${arch}$${kind}$gemm(iTransA,iTransB,im,in,ik,iAlpha,A,ilda,B,ildb,iBeta,C,ildc)
+#:endif
+
+  end subroutine ${arch}$gemm_${suffix}$
 
 #:endfor
+#:endfor
 
+#:for arch in ARCHLIST
+#:for suffix, precision, kind in CMPLX_KIND_PARAMS
 
   !> complex matrix*matrix product
-  subroutine gemm_cmplx(C,A,B,alpha,beta,transA,transB,n,m,k)
+  subroutine ${arch}$gemm_${suffix}$(C,A,B,alpha,beta,transA,transB,n,m,k)
 
     !> general matrix output
-    complex(rsp), intent(inout) :: C(:,:)
+    complex(r${precision}$p), intent(inout) :: C(:,:)
 
     !> general matrix
-    complex(rsp), intent(in) :: A(:,:)
+    complex(r${precision}$p), intent(in) :: A(:,:)
 
     !> general matrix
-    complex(rsp), intent(in) :: B(:,:)
+    complex(r${precision}$p), intent(in) :: B(:,:)
 
     !> defaults to 1 if not set
-    complex(rsp), intent(in), optional :: alpha
+    complex(r${precision}$p), intent(in), optional :: alpha
 
     !> defaults to 0 if not set
-    complex(rsp), intent(in), optional :: beta
+    complex(r${precision}$p), intent(in), optional :: beta
 
     !> optional transpose of A matrix (defaults to 'n'), allowed choices are 'n', 'N', 't', 'T', 'c'
     !> and 'C'
@@ -1185,7 +1217,13 @@ contains
     integer :: lda, ldb, ldc
     integer :: in, im, ik
     character :: iTransA, iTransB
-    complex(rsp) :: iAlpha, iBeta
+    complex(r${precision}$p) :: iAlpha, iBeta
+#:if arch == 'magmaf_'
+    !magma_devptr_t :: dA, dB, dC, queue
+    integer(kind=8) :: dA, dB, dC, queue
+    integer :: istat
+    call magmaf_queue_create(0,queue)
+#:endif
 
     if (present(transA)) then
       iTransA = transA
@@ -1206,12 +1244,12 @@ contains
     if (present(alpha)) then
       iAlpha = alpha
     else
-      iAlpha = cmplx(1.0,0.0,rsp)
+      iAlpha = cmplx(1.0,0.0,r${precision}$p)
     end if
     if (present(beta)) then
       iBeta = beta
     else
-      iBeta = cmplx(0.0,0.0,rsp)
+      iBeta = cmplx(0.0,0.0,r${precision}$p)
     end if
 
     lda = size(a,dim=1)
@@ -1256,129 +1294,36 @@ contains
     @:ASSERT(((ldb>=ik).and.(iTransB == 'n' .or. iTransB == 'N'))&
         & .or. (size(b,dim=2)>=ik))
 
-    call cgemm(iTransA,iTransB,im,in,ik,iAlpha,A,lda,B,ldb,iBeta,C,ldc)
+#:if arch == 'magmaf_'
+    istat = magmaf_${kind}$malloc(dA,size(A))
+    istat = magmaf_${kind}$malloc(dB,size(B))
+    istat = magmaf_${kind}$malloc(dC,size(C))
 
-  end subroutine gemm_cmplx
+    call magmaf_${kind}$setmatrix(size(A,dim=1),size(A,dim=2),A,size(A,dim=1),dA,size(A,dim=1),queue)
+    call magmaf_${kind}$setmatrix(size(B,dim=1),size(B,dim=2),B,size(B,dim=1),dB,size(B,dim=1),queue)
+    call magmaf_${kind}$setmatrix(size(C,dim=1),size(C,dim=2),C,size(C,dim=1),dC,size(C,dim=1),queue)
 
+    call ${arch}$${kind}$gemm(iTransA,iTransB,im,in,ik,iAlpha,dA,lda,dB,ldb,iBeta,dC,ldc,queue)
 
-  !> Double precision matrix*matrix product
-  subroutine gemm_dblecmplx(C,A,B,alpha,beta,transA,transB,n,m,k)
+    call magmaf_${kind}$getmatrix(size(C,dim=1),size(C,dim=2),dC,size(C,dim=1),C,size(C,dim=1),queue)
+    istat = magmaf_free(dA)
+    istat = magmaf_free(dB)
+    istat = magmaf_free(dC)
+    call magmaf_queue_destroy(queue)
+#:else
+    call ${arch}$${kind}$gemm(iTransA,iTransB,im,in,ik,iAlpha,A,lda,B,ldb,iBeta,C,ldc)
+#:endif
 
-    !> general matrix output
-    complex(rdp), intent(inout) :: C(:,:)
+  end subroutine ${arch}$gemm_${suffix}$
 
-    !> general matrix
-    complex(rdp), intent(in) :: A(:,:)
+#:endfor
+#:endfor
 
-    !> general matrix
-    complex(rdp), intent(in) :: B(:,:)
-
-    !> defaults to 1 if not set
-    complex(rdp), intent(in), optional :: alpha
-
-    !> defaults to 0 if not set
-    complex(rdp), intent(in), optional :: beta
-
-    !> optional transpose of A matrix (defaults to 'n'), allowed choices are 'n', 'N', 't', 'T', 'c'
-    !> and 'C'
-    character, intent(in), optional :: transA
-
-    !> optional transpose of B matrix (defaults to 'n'), allowed choices are 'n', 'N', 't', 'T', 'c'
-    !> and 'C'
-    character, intent(in), optional :: transB
-
-    !> specifies the number of columns of the matrix C
-    integer, intent(in), optional :: n
-
-    !> specifies the number of rows of the matrix C
-    integer, intent(in), optional :: m
-
-    !> specifies the internal number of elements in Op(A)_ik Op(B)_kj
-    integer, intent(in), optional :: k
-
-    integer :: lda, ldb, ldc
-    integer :: in, im, ik
-    character :: iTransA, iTransB
-    complex(rdp) :: iAlpha, iBeta
-
-    if (present(transA)) then
-      iTransA = transA
-    else
-      iTransA = 'n'
-    end if
-    if (present(transB)) then
-      iTransB = transB
-    else
-      iTransB = 'n'
-    end if
-
-    @:ASSERT(iTransA == 'n' .or. iTransA == 'N' .or. iTransA == 't'&
-        & .or. iTransA == 'T' .or. iTransA == 'c' .or. iTransA == 'C')
-    @:ASSERT(iTransB == 'n' .or. iTransB == 'N' .or. iTransB == 't'&
-        & .or. iTransB == 'T' .or. iTransB == 'c' .or. iTransB == 'C')
-
-    if (present(alpha)) then
-      iAlpha = alpha
-    else
-      iAlpha = cmplx(1.0,0.0,rdp)
-    end if
-    if (present(beta)) then
-      iBeta = beta
-    else
-      iBeta = cmplx(0.0,0.0,rdp)
-    end if
-
-    lda = size(a,dim=1)
-    ldb = size(b,dim=1)
-    ldc = size(c,dim=1)
-
-    if (present(m)) then
-      im = m
-    else
-      if (iTransA == 'n' .or. iTransA == 'N') then
-        im = size(A,dim=1)
-      else
-        im = size(A,dim=2)
-      end if
-    end if
-    if (present(n)) then
-      in = n
-    else
-      in = size(c,dim=2)
-    end if
-    if (present(k)) then
-      ik = k
-    else
-      if (iTransA == 'n' .or. iTransA == 'N') then
-        ik = size(A,dim=2)
-      else
-        ik = size(A,dim=1)
-      end if
-    end if
-
-    @:ASSERT(im>0)
-    @:ASSERT(in>0)
-    @:ASSERT(ik>0)
-    @:ASSERT(((lda>=im).and.(iTransA == 'n' .or. iTransA == 'N'))&
-        & .or. (size(a,dim=2)>=im))
-    @:ASSERT(ldc>=im)
-    @:ASSERT(((size(b,dim=2)>=in).and.(iTransB == 'n' .or. iTransB == 'N'))&
-        & .or. (ldb>=in))
-    @:ASSERT(size(c,dim=2)>=in)
-    @:ASSERT(((size(a,dim=2)>=ik).and.(iTransA == 'n' .or. iTransA == 'N'))&
-        & .or. (lda>=ik))
-    @:ASSERT(((ldb>=ik).and.(iTransB == 'n' .or. iTransB == 'N'))&
-        & .or. (size(b,dim=2)>=ik))
-
-    call zgemm(iTransA,iTransB,im,in,ik,iAlpha,A,lda,B,ldb,iBeta,C,ldc)
-
-  end subroutine gemm_dblecmplx
-
-
+#:for arch in ARCHLIST
 #:for suffix, kind in REAL_KIND_PARAMS
 
   !> Generalized real matrix matrix contraction (Cijl = Aijk * Bkl)
-  subroutine gemm332_${suffix}$(C, A, B, alpha, beta, transA, transB)
+  subroutine ${arch}$gemm332_${suffix}$(C, A, B, alpha, beta, transA, transB)
 
     !> general matrix output
     real(r${kind}$p), intent(inout), target, contiguous :: C(:,:,:)
@@ -1409,8 +1354,9 @@ contains
     pC(1 : size(C, dim=1) * size(C, dim=2), 1 : size(C, dim=3)) => C
     call gemm(pC, pA, B, alpha, beta, transA, transB)
 
-  end subroutine gemm332_${suffix}$
+  end subroutine ${arch}$gemm332_${suffix}$
 
+#:endfor
 #:endfor
 
 
@@ -1780,7 +1726,7 @@ contains
   end subroutine hemm_dblecmplx
 
 
-#:for ITYPE, VTYPE, LABEL, NAME in [('cmplx', 'rsp', 'single', 'c'),&
+  #:for ITYPE, VTYPE, LABEL, NAME in [('cmplx', 'rsp', 'single', 'c'),&
   & ('dblecmplx', 'rdp', 'double', 'z')]
 
   !> ${LABEL}$ precision complex matrix scaling

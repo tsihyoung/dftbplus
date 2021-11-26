@@ -7,11 +7,17 @@
 
 #:include 'common.fypp'
 
+#:set TYPE_PARAM = ['s', 'd', 'c', 'z']
+
 !> MAGMA GPU interface library
 module dftbp_magma
   use, intrinsic :: iso_c_binding, only : c_int
 #:if WITH_GPU
-  use magma, only : magmaf_ssygvd_m, magmaf_dsygvd_m, magmaf_chegvd_m, magmaf_zhegvd_m
+  use magma, only : magmaf_free, magmaf_queue_create, magmaf_queue_destroy, &
+    #:for prefix in TYPE_PARAM
+    & magmaf_${prefix}$malloc, magmaf_${prefix}$setmatrix, magmaf_${prefix}$getmatrix, magmaf_${prefix}$gemm, &
+    #:endfor
+    & magmaf_ssygvd_m, magmaf_dsygvd_m, magmaf_chegvd_m, magmaf_zhegvd_m
 #:endif
   implicit none
 
@@ -19,7 +25,8 @@ module dftbp_magma
   public :: withGpu
 #:if WITH_GPU
   public :: getGpusAvailable, getGpusRequested
-  public :: magmaf_ssygvd_m, magmaf_dsygvd_m, magmaf_chegvd_m, magmaf_zhegvd_m
+  public :: magmaf_free, magmaf_queue_create, magmaf_queue_destroy
+  public :: magmaf_smalloc, magmaf_dmalloc, magmaf_cmalloc, magmaf_zmalloc
 #:endif
 
   !> Whether code was built with GPU support

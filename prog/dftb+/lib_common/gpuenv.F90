@@ -7,12 +7,12 @@
 
 #:include 'common.fypp'
 
-
 !> Information on any GPUs on the system
 module dftbp_gpuenv
   use iso_c_binding, only :  c_int
   use dftbp_magma, only : getGpusAvailable, getGpusRequested
   use dftbp_globalenv, only : stdOut
+  use dftbp_message, only : error
   implicit none
 
   private
@@ -41,6 +41,9 @@ contains
 
     call getGpusAvailable(this%nGpu)
     call getGpusRequested(nGpuReq)
+    if (this%nGpu <= 0) then
+      call error("No GPU found, please switch to CPU solver and/or multiplier")
+    endif
     write(stdOut, *) "Number of GPUs requested:", nGpuReq
     write(stdOut, *) "Number of GPUs found    :", this%nGpu
     if ((nGpuReq <= this%nGpu) .and. (nGpuReq >= 1)) then
