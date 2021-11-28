@@ -2884,7 +2884,9 @@ contains
     end if
 
     if (this%electronicSolver%iSolver == electronicSolverTypes%magma_gvd &
-      & .or. input%ctrl%elecDynInp%Multiplier == multiplierTypes%GPU) then
+            & .or. (allocated(input%ctrl%elecDynInp) .and. &
+            ! no short circuit in Debug mode. Seg. fault arises without ElectronDynamics block
+            & input%ctrl%elecDynInp%Multiplier == multiplierTypes%GPU)) then
       #:if WITH_GPU
         call env%initGpu()
       #:else

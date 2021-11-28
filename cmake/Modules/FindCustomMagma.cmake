@@ -66,34 +66,38 @@ if(TARGET Magma::Magma)
 
 else()
 
-  option(MAGMA_DETECTION "Whether MAGMA library should be detected" TRUE)
+  option(MAGMA_DETECTION "Whether MAGMA library should be detected" FALSE)
+
+  set (MAGMA_LIBRARY_DIR "/cm/shared/apps/magma/2.6.1/lib")
+  set (MAGMA_INCLUDE_DIRECTORY "/cm/shared/apps/magma/2.6.1/include" "/cm/shared/apps/cuda11.2/toolkit/11.2.2/include")
+  set(MAGMA_LIBRARY "libmagma.so" "libmagma_sparse.so")
 
   if(MAGMA_DETECTION)
 
     find_package(PkgConfig QUIET)
     pkg_check_modules(_magma QUIET magma)
     # Overwrite PkgConfig values by user defined input if present.
-    if(NOT "${MAGMA_LIBRARY}" STREQUAL "")
-      set(_magma_LIBRARIES ${MAGMA_LIBRARY})
-      set(_magma_LIBRARY_DIRS ${MAGMA_LIBRARY_DIR})
-    endif()
-    if(NOT "${MAGMA_INCLUDE_DIR}" STREQUAL "")
-      set(_magma_INCLUDE_DIRS ${MAGMA_INCLUDE_DIR})
-    endif()
+    #if(NOT "${MAGMA_LIBRARY}" STREQUAL "")
+    #  set(_magma_LIBRARIES ${MAGMA_LIBRARY})
+    #  set(_magma_LIBRARY_DIRS ${MAGMA_LIBRARY_DIR})
+    #endif()
+    #if(NOT "${MAGMA_INCLUDE_DIR}" STREQUAL "")
+    #  set(_magma_INCLUDE_DIRS ${MAGMA_INCLUDE_DIR})
+    #endif()
 
-    find_custom_libraries("${_magma_LIBRARIES}" "${_magma_LIBRARY_DIRS}"
-      "${CustomMagma_FIND_QUIETLY}" _libs)
-    set(MAGMA_LIBRARY "${_libs}" CACHE STRING "List of MAGMA libraries to link" FORCE)
-    unset(_libs)
-    unset(_magma_LIBRARIES)
-    unset(_magma_LIBRARY_DIRS)
+    #find_custom_libraries("${_magma_LIBRARIES}" "${_magma_LIBRARY_DIRS}"
+    #  "${CustomMagma_FIND_QUIETLY}" _libs)
+    #set(MAGMA_LIBRARY "${_libs}" CACHE STRING "List of MAGMA libraries to link" FORCE)
+    #unset(_libs)
+    #unset(_magma_LIBRARIES)
+    #unset(_magma_LIBRARY_DIRS)
 
     # Check include file
-    find_path(MAGMA_INCLUDE_DIRECTORY NAMES magma.mod PATHS ${_magma_INCLUDE_DIRS}
-      PATH_SUFFIXES magma)
-    unset(_magma_INCLUDE_DIRS)
+    #find_path(MAGMA_INCLUDE_DIRECTORY NAMES magma.mod PATHS ${_magma_INCLUDE_DIRS}
+    #  PATH_SUFFIXES magma)
+    #unset(_magma_INCLUDE_DIRS)
   
-    set(MAGMA_DETECTION FALSE CACHE BOOL "Whether MAGMA library should be detected" FORCE)
+    #set(MAGMA_DETECTION FALSE CACHE BOOL "Whether MAGMA library should be detected" FORCE)
     
   endif()
 
