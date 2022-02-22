@@ -2883,16 +2883,23 @@ contains
       write(stdOut, "(A,':',T30,A)") "Electronic solver", this%electronicSolver%getSolverName()
     end if
 
-    if (this%electronicSolver%iSolver == electronicSolverTypes%magma_gvd &
-            & .or. (allocated(input%ctrl%elecDynInp) .and. &
-            ! no short circuit in Debug mode. Seg. fault arises without ElectronDynamics block
-            & input%ctrl%elecDynInp%Multiplier == multiplierTypes%GPU)) then
+    if (this%electronicSolver%iSolver == electronicSolverTypes%magma_gvd) then
       #:if WITH_GPU
         call env%initGpu()
       #:else
-        call error("Magma-solver or multiplier selected, but program was compiled without MAGMA")
+        call error("Magma solver selected, but program was compiled without MAGMA")
       #:endif
-    endif
+    end if
+
+    if (allocated(input%ctrl%elecDynInp)) then
+        if (input%ctrl%elecDynInp%Multiplier == multiplierTypes%GPU) then
+          #:if WITH_GPU
+            call env%initGpu()
+          #:else
+            call error("Magma multiplier selected, but program was compiled without MAGMA")
+          #:endif
+        end if
+    end if
 
     if (this%tSccCalc .and. .not.this%tRestartNoSC) then
       if (.not. allocated(this%reks)) then
